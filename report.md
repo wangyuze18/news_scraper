@@ -20,5 +20,5 @@
 访问及爬取朝日新闻数据可能需要 VPN（因地域限制或反爬机制），使用时需遵守当地法律法规及网站服务条款，避免违规风险。  
 ```  
 - [x] 雅虎日本 (https://news.yahoo.co.jp)
-- [x] 朝日新闻(免费内容) (https://www.asahi.coml)
+- [x] 朝日新闻(免费内容) (https://www.asahi.com)
 
