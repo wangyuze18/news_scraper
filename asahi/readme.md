@@ -56,6 +56,7 @@
 ```python
 # 主程序入口（asahi_crawler.py）
 if __name__ == "__main__":
+    MAX_NEWS_COUNT = 10  # 最大爬取新闻数量
     crawler = AsahiCrawler()
     target_url = "https://www.asahi.com/"  # 可修改为其他朝日新闻子页面
     result = crawler.crawl(target_url)

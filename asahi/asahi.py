@@ -8,13 +8,17 @@ import csv
 import logging
 from urllib.parse import urljoin
 import time
+
+MAX_NEWS_COUNT = 10  # 最大爬取新闻数量
+
 class AsahiCrawler:
     def __init__(self):
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
         }
         self.logger = self.setup_logger()
-        
+        self.news_count = 0
+
     def setup_logger(self):
         """配置日志记录"""
         log_dir = "./logs"
@@ -77,6 +81,9 @@ class AsahiCrawler:
         
         # 处理导航栏中的每个分类链接
         for category in navigation:
+            if self.news_count >= MAX_NEWS_COUNT:
+                break
+
             category_name = category.get("name", "未知分类")
             category_url = category.get("url")
             
@@ -102,9 +109,7 @@ class AsahiCrawler:
                 # 处理分类页面上的链接，传递已访问URL集合
                 category_news, visited_urls = self.process_links(category_links, category_url, navigation, visited_urls)
                 news_list.extend(category_news)
-                if(len(news_list)>10):
-                    self.logger.info(f"爬取到 {len(news_list)} 条新闻，达到上限，停止爬取")
-                    break
+
                 self.logger.info(f"完成处理分类: {category_name}，找到 {len(category_news)} 条新闻")
                 
                 
@@ -205,6 +210,10 @@ class AsahiCrawler:
                 # 验证并添加新闻条目
                 if title and content and publish_time and content!='[付费内容，无法获取全文]':
                     news_items.append(news_item)
+                    self.news_count += 1
+                    if self.news_count >= MAX_NEWS_COUNT:
+                        self.logger.info(f"达到最大爬取数量 {MAX_NEWS_COUNT}，停止爬取")
+                        break
                     # 对日志中的标题进行编码处理
                     safe_title = title.encode('utf-8', 'replace').decode('utf-8')
                     self.logger.info(f"成功解析新闻 {idx+1}/{len(links)}: {safe_title[:30]}... , 链接: {detail_url}")
@@ -560,12 +569,23 @@ if __name__ == "__main__":
         import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     
+
+    MAX_NEWS_COUNT = 100  # 最大爬取新闻数量
+
     crawler = AsahiCrawler()
     target_url = "https://www.asahi.com/"
     
+    start_time = datetime.now()
     # 爬取新闻
     result = crawler.crawl(target_url)
-    
+
+    end_time = datetime.now()
+    elapsed_time = end_time - start_time
+
+    crawler.logger.info("\n爬取时间统计:")
+    crawler.logger.info(f"- 开始时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    crawler.logger.info(f"- 结束时间: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    crawler.logger.info(f"- 总耗时: {elapsed_time.total_seconds():.2f} 秒 ({elapsed_time})")
     if result and result["news"]:
         # 过滤掉付费新闻
         free_news = result["news"]
@@ -583,14 +603,6 @@ if __name__ == "__main__":
             print(f"\n共爬取到 {len(result['news'])} 条新闻，其中{len(free_news)}条为免费内容")
             print(f"发现 {len(result['navigation'])} 个导航分类")
             
-            print("示例免费新闻:")
-            for i, item in enumerate(free_news[:3], 1):
-                print(f"\n新闻 {i}:")
-                print(f"标题: {item['标题']}")
-                print(f"发布时间: {item['发布时间']}")
-                print(f"正文长度: {len(item['正文'])} 字符")
-                print(f"图片数量: {item['图片数量']}")
-                print(f"原文链接: {item['原文链接']}")
         else:
             print("未爬取到任何免费新闻数据")
     else:

@@ -54,9 +54,9 @@ scraper = YahooJapanNewsScraper(log_file="./logs/scraper.log")
 ### 核心爬取方法
 ```python
 articles = scraper.scrape_news(
-    max_articles=100,       # 总爬取文章数（默认无限制）
-    max_per_topics=50,      # 每个话题分类最大链接数
-    max_per_categories=30   # 主页分类最大链接数
+   max_articles=100,       # 总共爬取的文章数
+   max_per_topics=100,    # 每个话题最多加载链接数
+   max_per_categories=100           # 每个分类最多加载链接数
 )
 ```
 
@@ -111,7 +111,9 @@ project-root/
 | 序号 | 标题                          | 发布时间          | 正文                          | 图片数量 | 图片链接                                  | 原文链接                          | 来源         |
 |------|-------------------------------|-------------------|-------------------------------|----------|-------------------------------------------|-----------------------------------|--------------|
 | 1    | 東京五輪開幕式の最新情報      | 2025-07-23 10:00 | [正文段落1...][正文段落2...]   | 3        | https://example.com/img1.jpg,https://...   | https://news.yahoo.co.jp/...      | Yahoo Japan  |
-
+```plain text
+图片请及时下载保存，目前程序爬取图片链接的有效期一般为3小时
+```
 
 ## 贡献与反馈
 - 欢迎提交PR修复bug或新增功能  

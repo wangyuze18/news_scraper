@@ -15,6 +15,7 @@ from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
 import requests
 import os
+from urllib.parse import urlparse, parse_qs
 
 class YahooJapanNewsScraper:
     def __init__(self, log_file=None):
@@ -104,6 +105,7 @@ class YahooJapanNewsScraper:
         all_articles = []
         all_links = set()
         
+
         # 1. 主页最新新闻
         self.logger.info("正在从主页分类获取新闻...")
         category_links = self.get_news_links_from_categories(max_links_per_category=max_per_categories)  # 取消分类内链接数限制
@@ -129,9 +131,12 @@ class YahooJapanNewsScraper:
                 
             self.visited_urls.add(cleaned_url)
             article = self.scrape_article(cleaned_url)
-            if article:
+            if article and self.is_valid_news(article):
                 all_articles.append(article)
                 self.logger.info(f"进度: {idx}/{len(unique_links)} - {article['title'][:30]}... \n {article['url']}")
+                if max_articles and len(all_articles)>=max_articles:
+                    self.logger.info(f"达到最大爬取数量 {max_articles}，停止爬取")
+                    break
             
             # 关联文章挖掘（取消每3篇触发的限制，改为始终执行）
             related_links = self.find_related_links(cleaned_url)
@@ -144,15 +149,21 @@ class YahooJapanNewsScraper:
                 if cleaned_rel_url not in self.visited_urls:
                     self.visited_urls.add(cleaned_rel_url)
                     rel_article = self.scrape_article(cleaned_rel_url)
-                    if rel_article:
+                    if rel_article and self.is_valid_news(rel_article):
                         all_articles.append(rel_article)
                         self.logger.info(f"从关联文章获取: {rel_article['title'][:30]}... \n {rel_article['url']}")
+                        if max_articles and len(all_articles)>=max_articles:
+                            self.logger.info(f"达到最大爬取数量 {max_articles}，停止爬取")
+                            break
             
             # time.sleep(random.uniform(0.5, 2.5))
         
         self.logger.info(f"爬取完成，共获取 {len(all_articles)} 篇文章")
         # 移除结果数量限制
-        return all_articles if max_articles is None else all_articles[:max_articles]
+        return all_articles
+
+    def is_valid_news(self, article):
+        return article['title'] and article['publish_time'] and article['title'] != 'Yahoo!ニュース' and article['publish_time'] != '未知时间'
 
     def get_news_links_from_categories(self, max_links_per_category=None, max_categories=None):
         """从/categories/下的多个分类页面爬取新闻链接（支持模拟点击加载更多）"""
@@ -217,67 +228,67 @@ class YahooJapanNewsScraper:
         self.logger.info(f"从分类页面共获取 {len(all_links)} 条链接")
         # 移除返回数量限制
         return list(all_links)
-
+    
     def extract_links_with_scroll(self, driver, max_links=None):
-        """在分类页面中模拟滚动加载更多链接（优化滚动逻辑）"""
-        self.logger.info("开始滚动页面提取链接...")
+        """滚动到底部加载所有内容后，一次性提取链接（优化逻辑）"""
+        self.logger.info("开始滚动页面加载所有内容...")
         links = set()
         scroll_count = 0
-        last_link_count = 0  # 记录上次提取的链接数
-        max_retries = 5  # 最大重试次数
+        max_retries = 3  # 最大重试次数
         retry_count = 0
+        last_height = driver.execute_script("return document.body.scrollHeight")  # 记录上次页面高度
         
-        # 增加初始等待时间，确保页面完全加载
-        time.sleep(random.uniform(3, 5))  # 延长初始等待时间
+        # 增加初始等待时间，确保页面基本加载
+        time.sleep(random.uniform(3, 5))
         
         while True:
-            # 提取当前页面链接
-            current_links = self.extract_article_links(driver)
-            links.update(current_links)
-            
-            # 检查是否达到最大链接数
-            if max_links is not None and len(links) >= max_links:
-                self.logger.info(f"已达到最大链接数 {max_links}，停止滚动")
+            links = self.extract_article_links(driver)
+            if max_links and len(links) >= max_links:
+                self.logger.info(f"达到最大链接数 {max_links}，停止加载")
                 break
-            
-            # 判断是否还有新链接加载
-            if len(links) == last_link_count:
-                retry_count += 1
-                if retry_count >= max_retries:
-                    self.logger.info(f"连续 {max_retries} 次未获取到新链接，停止滚动")
-                    break
-            else:
-                last_link_count = len(links)
-                retry_count = 0  # 重置重试次数
-            
-            # 滚动到页面底部触发加载更多
+            # 滚动到页面底部
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(random.uniform(2, 3))  # 延长滚动后的等待时间
+            time.sleep(random.uniform(2, 3))  # 等待内容加载
             
-            # 检查并点击"もっと見る"按钮（优化点击逻辑）
+            # 检查是否出现"もっと見る"按钮
             more_button = self.find_more_button(driver)
             if more_button:
                 try:
                     WebDriverWait(driver, 5).until(EC.element_to_be_clickable(more_button))
                     driver.execute_script("arguments[0].click();", more_button)
                     self.logger.info("点击'もっと見る'按钮，加载更多内容")
-                    time.sleep(random.uniform(3, 4))  # 点击后增加等待时间
+                    time.sleep(random.uniform(3, 4))  # 点击后等待新内容加载
+                    retry_count = 0  # 重置重试次数
                 except Exception as e:
                     self.logger.warning(f"按钮点击失败，继续滚动: {e}")
             else:
-                self.logger.debug("未找到加载更多按钮，继续滚动")
+                # 无更多按钮时，检查页面高度是否不再变化（判断是否加载完毕）
+                new_height = driver.execute_script("return document.body.scrollHeight")
+                if new_height == last_height:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        self.logger.info(f"连续 {max_retries} 次页面高度无变化，视为加载完成")
+                        break
+                else:
+                    last_height = new_height
+                    retry_count = 0  # 重置重试次数
             
             scroll_count += 1
-            self.logger.info(f"滚动 {scroll_count} 次，当前累计 {len(links)} 条链接")
+            self.logger.info(f"滚动 {scroll_count} 次，当前页面高度: {last_height}")
         
         self.logger.info(f"共提取 {len(links)} 条有效链接")
+        
+        # 应用最大链接数限制
         return list(links) if max_links is None else list(links)[:max_links]
 
     def find_more_button(self, driver):
         """查找加载更多按钮（示例实现，可能需要根据实际页面调整）"""
         try:
             return WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.XPATH, '//a[contains(text(), "もっと見る")]'))
+                EC.presence_of_element_located((
+                    By.XPATH, 
+                    '//*[contains(text(), "もっと見る") and contains(@class, "sc-10wa6pi-1")]'  # 结合类名定位
+                ))
             )
         except Exception as e:
             self.logger.debug(f"未找到'もっと見る'按钮: {e}")
@@ -327,13 +338,13 @@ class YahooJapanNewsScraper:
                     page_url = f"{base_url}?page={page}" if page > 1 else base_url
                     
                     try:
-                        # 获取分类页内容
-                        self.logger.debug(f"请求分类页: {page_url}")
+                        # 获取话题页内容
+                        self.logger.debug(f"请求话题页: {page_url}")
                         response = session.get(page_url, headers=self.get_random_headers(), timeout=15)
                         response.raise_for_status()
                         
                         if "該当する記事が見つかりません" in response.text:
-                            self.logger.info(f"分类 {cat_name} 第 {page} 页无内容，停止爬取")
+                            self.logger.info(f"话题 {cat_name} 第 {page} 页无内容，停止爬取")
                             has_more = False
                             break
                         
@@ -354,11 +365,11 @@ class YahooJapanNewsScraper:
                                     pickup_links.add(full_url)
                         
                         if not pickup_links:
-                            self.logger.info(f"分类 {cat_name} 第 {page} 页未找到过渡链接，停止爬取")
+                            self.logger.info(f"话题 {cat_name} 第 {page} 页未找到过渡链接，停止爬取")
                             has_more = False
                             break
                         
-                        self.logger.info(f"分类[{cat_name}] 第{page}页 获取到{len(pickup_links)}个过渡链接")
+                        self.logger.info(f"话题[{cat_name}] 第{page}页 获取到{len(pickup_links)}个过渡链接")
                         
                         # 访问每个/pickup/页面，提取/articles/链接
                         for pickup_url in pickup_links:
@@ -392,52 +403,89 @@ class YahooJapanNewsScraper:
                         
                         # 检查是否达到用户指定的max_per_category（若无则继续）
                         if max_per_topics is not None and len(category_links) >= max_per_topics:
-                            self.logger.info(f"分类 {cat_name} 已达到最大链接数 {max_per_topics}，停止爬取")
+                            self.logger.info(f"话题 {cat_name} 已达到最大链接数 {max_per_topics}，停止爬取")
                             has_more = False
                             break
                         
                     except Exception as e:
-                        self.logger.error(f"分类[{cat_name}] 第{page}页请求失败: {str(e)}")
+                        self.logger.error(f"话题[{cat_name}] 第{page}页请求失败: {str(e)}")
                         has_more = False
                         break
                 
                 page += 1
                 # 取消max_pages限制，无限翻页直到无内容
                 if max_pages is not None and page > max_pages:
-                    self.logger.info(f"分类 {cat_name} 已达到最大页数 {max_pages}，停止爬取")
+                    self.logger.info(f"话题 {cat_name} 已达到最大页数 {max_pages}，停止爬取")
                     has_more = False
             
             all_links.extend(list(category_links))
-            self.logger.info(f"分类[{cat_name}] 共获取到{len(category_links)}条文章链接")
+            self.logger.info(f"话题[{cat_name}] 共获取到{len(category_links)}条文章链接")
         
         self.logger.info(f"从话题页面共获取 {len(all_links)} 条链接")
         return all_links
-
+    
     def find_related_links(self, article_url, max_links=None):
-        """从文章正文发现相关链接（取消返回数量限制）"""
+        """整合策略1（标题定位）的相关链接提取"""
         try:
             self.logger.debug(f"查找文章 {article_url} 的相关链接")
             response = requests.get(article_url, headers=self.get_random_headers())
             soup = BeautifulSoup(response.text, 'html.parser')
             
             related = set()
-            content = soup.find('div', class_=re.compile(r'article_body|content'))
-            if content:
-                for a in content.find_all('a', href=re.compile(r'/articles/')):
-                    href = a.get('href')
-                    if href and href != article_url:
-                        full_url = urljoin(self.base_url, href)
-                        cleaned_url = self.clean_article_url(full_url)  # 清洗URL
-                        if cleaned_url:
-                            related.add(cleaned_url)
+            
+            # ---------------------- 策略1：通过标题文本定位相关文章区域 ----------------------
+            # 调整标题匹配逻辑，适配日文「関連記事」及可能的英文标题
+            related_section = soup.find(
+                lambda tag: tag.name in ['h2', 'h3', 'h4'] and 
+                ('関連記事' in tag.get_text(strip=True) or 'Related Articles' in tag.get_text(strip=True))
+            )
+            
+            if related_section:
+                self.logger.debug("通过标题定位到相关文章区域")
+                # 调整容器查找逻辑：查找标题后的首个直接父级容器或同级列表容器
+                container = related_section.find_next(['ul', 'ol'])  # 增加div容器支持
+                if container:
+                    self._extract_links_from_container(container, related, article_url)
+                else:
+                    self.logger.debug("标题下方无有效容器")
+                    # 直接从标题后续的兄弟元素中提取链接
+                    # for sibling in related_section.find_next_siblings():
+                    #     if sibling.name == 'a':
+                    #         self._process_link(sibling, related, article_url)
+                    #     elif sibling.name in ['div', 'p']:
+                    #         # 从段落或div中递归查找链接
+                    #         for a in sibling.find_all('a', href=True, limit=50):
+                    #             self._process_link(a, related, article_url)
             
             self.logger.info(f"从文章 {article_url} 发现 {len(related)} 条相关链接")
-            # 移除数量限制，返回全部有效链接
-            return list(related)
+            return list(related)[:max_links] if max_links else list(related)
+            
         except Exception as e:
             self.logger.error(f"关联链接发现失败: {e}")
             return []
+        
+    def _extract_links_from_container(self, container, related_set, base_url):
+        """从容器中提取链接（仅限直接子元素）"""
+        for a in container.find_all('a', href=True, limit=50):  # 限制单次提取数量
+            self._process_link(a, related_set, base_url)
 
+    def _process_link(self, a_tag, related_set, base_url):
+        """统一链接处理（清洗、验证、去重）"""
+        href = a_tag.get('href')
+        if href:
+            # 处理相对路径（兼容不同域名的相关链接）
+            full_url = urljoin(base_url, href) if not href.startswith(('http://', 'https://')) else href
+            
+            # 清洗URL（保留参数，仅去除无效后缀）
+            cleaned_url = self.clean_article_url(full_url)
+            if not cleaned_url:
+                return
+            
+            # 验证有效性（非广告、非资源页）
+            if self.is_valid_news_url(cleaned_url) and cleaned_url not in self.visited_urls:
+                related_set.add(cleaned_url)
+                self.logger.debug(f"添加有效链接: {cleaned_url}")
+                
     # 文章详情爬取（保持原有实现）
     def scrape_article(self, url: str) -> Optional[Dict]:
         """爬取单篇文章详情"""
@@ -499,13 +547,26 @@ class YahooJapanNewsScraper:
     def _extract_images(self, soup, base_url):
         """提取图片"""
         images = []
-        for selector in ['div.article_body', 'div.photoGallery', 'div.articleDetail']:
+        for selector in ['div.article_body', 'div.photoGallery', 'div.articleDetail', 'div.sc-1tt2vmb-1']:
             container = soup.select_one(selector)
             if container:
                 for img in container.find_all('img'):
-                    img_url = img.get('src') or img.get('data-src')
+                    img_url = img.get('src') or img.get('srcset')
                     if img_url and not self.is_advertisement(img_url):
-                        images.append(urljoin(base_url, img_url))
+                    # 解析URL参数，保留exp字段，去除w和h参数
+                        parsed = urlparse(img_url)
+                        query = parse_qs(parsed.query)
+                        # 保留exp参数，删除w和h参数
+                        if 'exp' in query:
+                            new_query = {k: v for k, v in query.items() if k not in ['w', 'h']}
+                            # 重新构建查询字符串
+                            new_query_str = '&'.join([f"{k}={v[0]}" for k, v in new_query.items()])
+                            # 组合URL（保留协议、域名、路径和exp等参数）
+                            clean_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{new_query_str}" if new_query_str else f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                        else:
+                            # 无exp参数时，去除所有参数（保持原逻辑）
+                            clean_url = re.split(r'\?|#', img_url)[0]
+                        images.append(clean_url)
         return images
 
     def is_advertisement(self, text: str) -> bool:
@@ -516,6 +577,7 @@ class YahooJapanNewsScraper:
     # 存储方法增强
     def save_to_csv(self, articles: List[Dict], filename: str = None):
         """增强版CSV存储，包含图片链接"""
+        os.makedirs('./saves', exist_ok=True)  # 确保保存目录存在
         if not articles:
             self.logger.warning("无有效文章可保存")
             return
@@ -553,6 +615,8 @@ class YahooJapanNewsScraper:
 
     def save_to_json(self, articles: List[Dict], filename: str = None):
         """JSON格式存储"""
+        os.makedirs('./saves', exist_ok=True)  # 确保保存目录存在
+
         if not filename:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"./saves/yahoo_news_{timestamp}.json"
@@ -582,8 +646,8 @@ if __name__ == "__main__":
     # 注意：由于已取消所有数量限制，建议设置合理的max参数避免无限爬取
     articles = scraper.scrape_news(
         max_articles=100,       # 总共爬取的文章数
-        max_per_topics=1,    # 每个分类最多爬取数量
-        max_per_categories=1           # 主页最多加载链接数
+        max_per_topics=10,    # 每个话题最多加载链接数
+        max_per_categories=10      # 每个分类最多加载链接数
     )
     
     # 记录结束时间并计算耗时
