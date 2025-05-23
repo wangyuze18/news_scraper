@@ -46,7 +46,31 @@ class YahooJapanNewsScraper:
             r'/images/|/videos/|/photos/|/photo/|/gallery/|/pickup/',  # 排除图片/视频/相册/过渡页路径
             re.IGNORECASE
         )
+
+        self.topics = {
+            # 'domestic': '国内',
+            # 'world': '国际',
+            "business": "经济",
+            "entertainment": "娱乐",
+            "sports": "运动",
+            "it": "科技",
+            "science": "科学",
+        }
         
+        self.categories = {
+            # "": "主要",
+            # "domestic": "国内",
+            # "world": "国際",
+            "science": "科学",
+            "business": "经济",
+            "entertainment": "娱乐",
+            "sports": "运动",
+            "life": "生活",
+            "it": "科技",
+        }  # 可根据实际分类扩展
+        
+        self.keywords = ['a']
+
         # 配置日志
         self.logger = self._setup_logger(log_file)
 
@@ -106,7 +130,8 @@ class YahooJapanNewsScraper:
     def scrape_news(self, 
                     max_articles=None,        
                     max_per_categories=None,           
-                    max_per_topics=None):   
+                    max_per_topics=None,
+                    max_links_per_keyword=None):   
         """整合多来源的爬取入口（含分类信息）"""
         self.logger.info("开始爬取新闻...")
         all_articles = []
@@ -116,13 +141,20 @@ class YahooJapanNewsScraper:
         self.logger.info("正在从主页分类获取新闻...")
         category_links = self.get_news_links_from_categories(max_links_per_category=max_per_categories)
         all_links_with_category.extend(category_links)
-        self.logger.info(f"从主页分类获取到 {len(category_links)} 条带分类链接")
+        self.logger.info(f"从主页分类获取到 {len(category_links)} 条链接")
 
         # 2. 话题页面爬取（带二级分类信息）
         self.logger.info("正在从话题页面获取新闻...")
         topic_links = self.get_links_from_topics(max_per_topics=max_per_topics)
         all_links_with_category.extend(topic_links)
-        self.logger.info(f"从话题页面获取到 {len(topic_links)} 条带分类链接")
+        self.logger.info(f"从话题页面获取到 {len(topic_links)} 条链接")
+
+
+        # 3. 关键词搜索爬取（带关键词信息）
+        self.logger.info("正在从关键词搜索获取新闻...")
+        search_links = self.get_news_links_from_search(max_links_per_keyword=max_links_per_keyword)
+        all_links_with_category.extend(search_links)
+        self.logger.info(f"从关键词搜索获取到 {len(search_links)} 条链接")
 
         # 提取所有唯一URL，并保留分类信息
         unique_urls = []
@@ -137,6 +169,9 @@ class YahooJapanNewsScraper:
                 unique_urls.append(url)
 
         self.logger.info(f"去重后得到 {len(unique_urls)} 个唯一URL，准备爬取详情...")
+
+
+
 
         for idx, url in enumerate(unique_urls, 1):
             cleaned_url = self.clean_article_url(url)
@@ -185,6 +220,47 @@ class YahooJapanNewsScraper:
         self.logger.info(f"爬取完成，共获取 {len(all_articles)} 篇带分类的文章")
         return all_articles
 
+    def get_news_links_from_search(self, max_links_per_keyword=None):
+        """
+        从搜索页面爬取新闻链接（附带关键词信息）
+        :param keywords: 关键词列表
+        :param max_links_per_keyword: 每个关键词最多获取的链接数
+        :return: 带有关键词信息的链接列表
+        """
+        if max_links_per_keyword is not None and max_links_per_keyword < 1:
+            return []
+
+        all_links_with_keyword = []  # 存储带关键词信息的链接
+        options = Options()
+        # ...（保留原有options配置）
+
+        with webdriver.Chrome(options=options) as driver:
+            for keyword in self.keywords:
+                search_url = f"{self.base_url}/search?p={keyword}&ei=utf-8"
+                self.logger.info(f"\n开始搜索关键词：{keyword} ({search_url})")
+
+                try:
+                    driver.get(search_url)
+                    WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, 'a[href*="/articles/"]'))
+                    )
+                    time.sleep(random.uniform(2, 3))
+
+                    # 提取链接并附加关键词信息
+                    search_links = self.extract_links_with_scroll(driver, max_links=max_links_per_keyword)
+                    for link in search_links:
+                        all_links_with_keyword.append({
+                            "url": link,
+                            "category": ""  # 附加关键词信息
+                        })
+
+                    self.logger.info(f"  关键词 {keyword} 获取 {len(search_links)} 条链接，累计总数：{len(all_links_with_keyword)}")
+                except Exception as e:
+                    self.logger.error(f"关键词 {keyword} 搜索页面加载失败: {e}")
+
+        self.logger.info(f"共获取 {len(all_links_with_keyword)} 条带关键词的链接")
+        return all_links_with_keyword
+
     def scrape_article_with_category(self, url, category_info):
         """爬取文章详情并注入分类信息"""
         try:
@@ -202,25 +278,16 @@ class YahooJapanNewsScraper:
 
     def get_news_links_from_categories(self, max_links_per_category=None, max_categories=None):
         """从/categories/下的多个分类页面爬取新闻链接（附带分类信息，支持模拟点击加载更多）"""
-        categories = {
-            # "": "主要",
-            # "domestic": "国内",
-            # "world": "国際",
-            "science": "科学",
-            "business": "经济",
-            "entertainment": "娱乐",
-            "sports": "运动",
-            "life": "生活",
-            "it": "科技",
-        }  # 可根据实际分类扩展
+        if max_links_per_category is not None and max_links_per_category < 1:
+            return []  # 如果限制小于1，则返回空列表
         
-        self.logger.info(f"开始从分类页面获取链接，共 {len(categories)} 个分类")
+        self.logger.info(f"开始从分类页面获取链接，共 {len(self.categories)} 个分类")
         all_links_with_category = []  # 存储带分类信息的链接
         options = Options()
         # ...（保留原有options配置）
         
         with webdriver.Chrome(options=options) as driver:
-            for cat_slug, cat_name in categories.items():
+            for cat_slug, cat_name in self.categories.items():
                 if max_categories is not None and len(all_links_with_category) >= max_categories:
                     break  # 达到分类总数限制时停止
                 
@@ -251,20 +318,13 @@ class YahooJapanNewsScraper:
 
     def get_links_from_topics(self, max_per_topics=None):
         """从话题页面爬取新闻链接（仅保留一级分类信息）"""
-        categories = {
-            # 'domestic': '国内',
-            # 'world': '国际',
-            "business": "经济",
-            "entertainment": "娱乐",
-            "sports": "运动",
-            "it": "科技",
-            "science": "科学",
-        }
+        if max_per_topics is not None and max_per_topics < 1:   
+            return []
         
-        self.logger.info(f"开始从话题页面获取链接，共 {len(categories)} 个分类")
+        self.logger.info(f"开始从话题页面获取链接，共 {len(self.topics)} 个话题")
         all_links = []  # 存储带一级分类的链接
         
-        for cat_id, main_category in categories.items():
+        for cat_id, main_category in self.topics.items():
             self.logger.info(f"\n开始爬取分类: {main_category} ({cat_id})... {self.base_url}/topics/{cat_id}")
             page = 1
             has_more = True
@@ -467,12 +527,16 @@ class YahooJapanNewsScraper:
         return list(links) if max_links is None else list(links)[:max_links]
 
     def find_more_button(self, driver):
-        """查找加载更多按钮（示例实现，可能需要根据实际页面调整）"""
+        """查找加载更多按钮，支持匹配不同类名或标签结构的按钮"""
         try:
+            # 使用 XPath 组合条件：
+            # 1. 按钮文本包含“もっと見る”
+            # 2. 匹配 <button> 或 <span> 标签（可能存在嵌套结构）
+            # 3. 排除可能的广告按钮（可选，根据实际情况调整）
             return WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((
                     By.XPATH, 
-                    '//*[contains(text(), "もっと見る") and contains(@class, "sc-10wa6pi-1")]'  # 结合类名定位
+                    '//button[contains(text(), "もっと見る") or .//span[contains(text(), "もっと見る")]]'
                 ))
             )
         except Exception as e:
@@ -742,7 +806,7 @@ class YahooJapanNewsScraper:
                         '标题': article['title'],
                         '发布时间': article['publish_time'],
                         '正文': '\n'.join(article['content']),
-                        '分类': article.get('category', '未知分类'),
+                        '分类': article.get('category', ''),
                         '图片数量': len(article.get('images', [])),
                         '图片链接': image_links,  # 新增图片链接字段
                         '原文链接': article['url'],
@@ -786,8 +850,9 @@ if __name__ == "__main__":
     # 注意：由于已取消所有数量限制，建议设置合理的max参数避免无限爬取
     articles = scraper.scrape_news(
         max_articles=100,       # 总共爬取的文章数
-        max_per_topics=10,    # 每个话题最多加载链接数
-        max_per_categories=10      # 每个分类最多加载链接数
+        max_per_topics=0,    # 每个话题最多加载链接数
+        max_per_categories=100,      # 每个分类最多加载链接数
+        max_links_per_keyword=0,  # 每个关键词最多加载链接数
     )
     
     # 记录结束时间并计算耗时
