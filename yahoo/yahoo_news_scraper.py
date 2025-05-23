@@ -18,7 +18,7 @@ import os
 from urllib.parse import urlparse, parse_qs
 
 class YahooJapanNewsScraper:
-    def __init__(self, log_file=None):
+    def __init__(self, log_file=None, download_images=False, image_save_dir="./saves/pic"):
         self.base_url = "https://news.yahoo.co.jp"
         self.user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -26,7 +26,6 @@ class YahooJapanNewsScraper:
             'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1'
         ]
         self.headers_list = [
-            # 添加多个不同的User-Agent
             {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'},
             {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36'},
             {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0'},
@@ -37,95 +36,174 @@ class YahooJapanNewsScraper:
             '広告', 'PR', 'スポンサー', 'プロモーション',
             'adserver', 'doubleclick', 'amazon-adsystem'
         ]
-        self.visited_urls = set()  # 用于URL去重
+        self.visited_urls = set()
         self.article_pattern = re.compile(
-            r'^https?://news\.yahoo\.co\.jp/articles/[a-z0-9]+$',  # 匹配/articles/文章ID格式
-            re.IGNORECASE
+            r'^https?://news\.yahoo\.co\.jp/articles/[a-z0-9]+$', re.IGNORECASE
         )
         self.resource_pattern = re.compile(
-            r'/images/|/videos/|/photos/|/photo/|/gallery/|/pickup/',  # 排除图片/视频/相册/过渡页路径
-            re.IGNORECASE
+            r'/images/|/videos/|/photos/|/photo/|/gallery/|/pickup/', re.IGNORECASE
         )
-
         self.topics = {
-            # 'domestic': '国内',
-            # 'world': '国际',
             "business": "经济",
             "entertainment": "娱乐",
             "sports": "运动",
             "it": "科技",
             "science": "科学",
         }
-        
         self.categories = {
-            # "": "主要",
-            # "domestic": "国内",
-            # "world": "国際",
             "science": "科学",
             "business": "经济",
             "entertainment": "娱乐",
             "sports": "运动",
             "life": "生活",
             "it": "科技",
-        }  # 可根据实际分类扩展
-        
+        }
         self.keywords = ['a']
+        
+        # New: Image download settings
+        self.download_images = download_images  # Whether to download images
+        self.image_save_dir = image_save_dir  # Directory to save images
+        if self.download_images:
+            os.makedirs(self.image_save_dir, exist_ok=True)  # Create image save directory if it doesn't exist
 
-        # 配置日志
         self.logger = self._setup_logger(log_file)
 
     def _setup_logger(self, log_file=None):
-        """配置日志记录器"""
         logger = logging.getLogger('YahooNewsScraper')
         logger.setLevel(logging.INFO)
-        
-        # 清除默认处理器
         if logger.handlers:
             logger.handlers = []
-        
-        # 创建文件处理器
         if log_file:
             file_handler = logging.FileHandler(log_file, encoding='utf-8')
             file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
             logger.addHandler(file_handler)
-        
-        # 创建控制台处理器
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         logger.addHandler(console_handler)
-        
         return logger
 
+    def download_image(self, img_url: str, article_id: str, index: int) -> Optional[str]:
+        """Download an image and return its local path."""
+        if not self.download_images:
+            return None
+        try:
+            # Generate a unique filename using article ID and index
+            parsed_url = urlparse(img_url)
+            file_ext = os.path.splitext(parsed_url.path)[1] or '.jpg'
+            filename = f"{article_id}_{index}{file_ext}"
+            local_path = os.path.join(self.image_save_dir, filename)
+            
+            # Download the image
+            headers = self.get_random_headers()
+            response = requests.get(img_url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            # Save the image
+            with open(local_path, 'wb') as f:
+                f.write(response.content)
+            self.logger.info(f"Downloaded image: {img_url} to {local_path}")
+            return local_path
+        except Exception as e:
+            self.logger.error(f"Failed to download image {img_url}: {e}")
+            return None
+
+    def scrape_article(self, url: str) -> Optional[Dict]:
+        """Crawl a single article's details, optionally downloading images."""
+        try:
+            self.logger.debug(f"开始爬取文章: {url}")
+            article_data = self.extract_article(url)
+            
+            # Generate a unique article ID (e.g., from URL)
+            article_id = url.split('/')[-1]
+            
+            # Download images if enabled
+            local_image_paths = []
+            if self.download_images:
+                for idx, img_url in enumerate(article_data['images']):
+                    local_path = self.download_image(img_url, article_id, idx)
+                    if local_path:
+                        local_image_paths.append(local_path)
+            
+            # Add article information
+            article = {
+                'title': article_data['title'],
+                'publish_time': article_data['publish_time'],
+                'content': article_data['content'],
+                'images': article_data['images'],  # Keep original URLs
+                'local_images': local_image_paths,  # Add local paths
+                'url': url,
+                'source': 'Yahoo Japan News'
+            }
+            
+            self.logger.debug(f"成功爬取文章: {article['title']}")
+            return article
+        except Exception as e:
+            self.logger.error(f"文章爬取失败: {url} - {e}")
+            return None
+
+    def save_to_csv(self, articles: List[Dict], filename: str = None):
+        """Enhanced CSV storage, including local image paths."""
+        os.makedirs('./saves', exist_ok=True)
+        if not articles:
+            self.logger.warning("无有效文章可保存")
+            return
+        
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"./saves/yahoo_news_{timestamp}.csv"
+        
+        try:
+            self.logger.info(f"开始保存 {len(articles)} 篇文章到 {filename}")
+            with open(filename, 'w', encoding='utf-8-sig', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=[
+                    '序号', '标题', '发布时间', '正文', '分类', '图片数量', '图片链接', '本地图片路径', '原文链接', '来源'
+                ])
+                writer.writeheader()
+                
+                for idx, article in enumerate(articles, 1):
+                    image_links = ','.join(article.get('images', []))
+                    local_image_paths = ','.join(article.get('local_images', []))  # New field
+                    writer.writerow({
+                        '序号': idx,
+                        '标题': article['title'],
+                        '发布时间': article['publish_time'],
+                        '正文': '\n'.join(article['content']),
+                        '分类': article.get('category', ''),
+                        '图片数量': len(article.get('images', [])),
+                        '图片链接': image_links,
+                        '本地图片路径': local_image_paths,  # New field
+                        '原文链接': article['url'],
+                        '来源': article.get('source', 'Yahoo Japan')
+                    })
+            
+            self.logger.info(f"成功保存 {len(articles)} 篇文章到 {filename}")
+        except Exception as e:
+            self.logger.error(f"CSV保存失败: {e}")
+
+    # Other methods (unchanged, omitted for brevity)
     def get_random_headers(self):
         return {
             'User-Agent': random.choice(self.user_agents),
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
             'Referer': self.base_url
         }
-    
+
     def is_valid_news_url(self, url):
-        """判断是否为有效的雅虎新闻正文链接（排除资源页）"""
-        # 先清洗URL，再校验有效性
         cleaned_url = self.clean_article_url(url)
         if not cleaned_url:
             return False
-            
-        # 校验是否符合文章链接格式且不包含资源路径
         if not self.article_pattern.match(cleaned_url):
             return False
         if self.resource_pattern.search(cleaned_url):
             return False
-            
         return True
-    
+
     def clean_article_url(self, url: str) -> Optional[str]:
-        """清洗URL，提取主文章链接（去除/images/000等后缀）"""
-        # 匹配/articles/后面的路径
         pattern = r'^(https://news\.yahoo\.co\.jp/(?:articles|expert/articles)/[^/?#]+)'
         match = re.match(pattern, url)
         if match:
-            return match.group(1)  # 返回主链接部分
-        return None  # 无效链接返回None
+            return match.group(1)
+        return None
     
     def scrape_news(self, 
                     max_articles=None,        
@@ -621,30 +699,6 @@ class YahooJapanNewsScraper:
                 related_set.add(cleaned_url)
                 self.logger.debug(f"添加有效链接: {cleaned_url}")
                     
-
-    def scrape_article(self, url: str) -> Optional[Dict]:
-        """爬取单篇文章详情"""
-        try:
-            self.logger.debug(f"开始爬取文章: {url}")
-            
-            # 使用整合后的方法提取文章信息
-            article_data = self.extract_article(url)
-            
-            # 添加额外信息
-            article = {
-                'title': article_data['title'],
-                'publish_time': article_data['publish_time'],
-                'content': article_data['content'],
-                'images': article_data['images'],
-                'url': url,
-                'source': 'Yahoo Japan News'
-            }
-            
-            self.logger.debug(f"成功爬取文章: {article['title']}")
-            return article
-        except Exception as e:
-            self.logger.error(f"文章爬取失败: {url} - {e}")
-            return None
     
     def extract_article(self, url):
         """提取文章的完整信息（标题、发布时间、内容、图片）"""
@@ -777,46 +831,6 @@ class YahooJapanNewsScraper:
         lower_text = text.lower()
         return any(keyword in lower_text for keyword in self.ad_keywords)
 
-    # 存储方法增强
-    def save_to_csv(self, articles: List[Dict], filename: str = None):
-        """增强版CSV存储，包含图片链接"""
-        os.makedirs('./saves', exist_ok=True)  # 确保保存目录存在
-        if not articles:
-            self.logger.warning("无有效文章可保存")
-            return
-        
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"./saves/yahoo_news_{timestamp}.csv"
-        
-        try:
-            self.logger.info(f"开始保存 {len(articles)} 篇文章到 {filename}")
-            with open(filename, 'w', encoding='utf-8-sig', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=[
-                    '序号', '标题', '发布时间', '正文', '分类', '图片数量', '图片链接', '原文链接', '来源'
-                ])
-                writer.writeheader()
-                
-                for idx, article in enumerate(articles, 1):
-                    # 将图片链接列表转为逗号分隔的字符串
-                    image_links = ','.join(article.get('images', []))
-                    
-                    writer.writerow({
-                        '序号': idx,
-                        '标题': article['title'],
-                        '发布时间': article['publish_time'],
-                        '正文': '\n'.join(article['content']),
-                        '分类': article.get('category', ''),
-                        '图片数量': len(article.get('images', [])),
-                        '图片链接': image_links,  # 新增图片链接字段
-                        '原文链接': article['url'],
-                        '来源': article.get('source', 'Yahoo Japan')
-                    })
-            
-            self.logger.info(f"成功保存 {len(articles)} 篇文章到 {filename}")
-        except Exception as e:
-            self.logger.error(f"CSV保存失败: {e}")
-
     def save_to_json(self, articles: List[Dict], filename: str = None):
         """JSON格式存储"""
         os.makedirs('./saves', exist_ok=True)  # 确保保存目录存在
@@ -835,49 +849,46 @@ class YahooJapanNewsScraper:
 
 # 使用示例
 if __name__ == "__main__":
-    # 配置日志文件
-    os.makedirs('./logs', exist_ok=True)  # 确保日志目录存在
+    os.makedirs('./logs', exist_ok=True)
     log_file = f"./logs/yahoo_news_scraper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     
-    # 创建爬虫实例并指定日志文件
-    scraper = YahooJapanNewsScraper(log_file=log_file)
+    # Enable image downloading and specify custom directory
+    scraper = YahooJapanNewsScraper(
+        log_file=log_file,
+        download_images=True,  # Enable image downloading
+        image_save_dir="./saves/images"  # Custom directory
+    )
     
-    # 记录开始时间
     start_time = datetime.now()
     scraper.logger.info(f"开始爬取时间：{start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # 综合爬取（最多100篇，启用分类和关联文章爬取）
-    # 注意：由于已取消所有数量限制，建议设置合理的max参数避免无限爬取
     articles = scraper.scrape_news(
-        max_articles=100,       # 总共爬取的文章数
-        max_per_topics=0,    # 每个话题最多加载链接数
-        max_per_categories=100,      # 每个分类最多加载链接数
-        max_links_per_keyword=0,  # 每个关键词最多加载链接数
+        max_articles=10,  # Reduced for testing
+        max_per_topics=5,
+        max_per_categories=0,
+        max_links_per_keyword=0,
     )
     
-    # 记录结束时间并计算耗时
     end_time = datetime.now()
     elapsed_time = end_time - start_time
     
-    # 保存结果
     if articles:
         scraper.save_to_csv(articles)
         scraper.save_to_json(articles)
     else:
         scraper.logger.warning("未获取到任何文章，跳过保存")
     
-    # 爬取时间统计
     scraper.logger.info("\n爬取时间统计:")
     scraper.logger.info(f"- 开始时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     scraper.logger.info(f"- 结束时间: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     scraper.logger.info(f"- 总耗时: {elapsed_time.total_seconds():.2f} 秒 ({elapsed_time})")
     
-    # 爬取结果统计
     scraper.logger.info("\n爬取结果统计:")
     if articles:
         scraper.logger.info(f"- 总文章数: {len(articles)}")
         valid_times = [a['publish_time'] for a in articles if a['publish_time'] != '未知时间']
         scraper.logger.info(f"- 最早发布时间: {'无有效时间' if not valid_times else min(valid_times)}")
         scraper.logger.info(f"- 包含图片的文章: {sum(1 for a in articles if a['images'])} 篇")
+        scraper.logger.info(f"- 下载的图片数: {sum(len(a['local_images']) for a in articles if a.get('local_images'))}")
     else:
         scraper.logger.info("- 未获取到有效文章")

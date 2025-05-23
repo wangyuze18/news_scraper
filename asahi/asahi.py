@@ -23,22 +23,22 @@ except ImportError:
 class AsahiCrawler:
     def __init__(self):
         self.headers_list = [
-                    {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-                    },
-                    {
-                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-                    },
-                    {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0"
-                    },
-                    {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.2535.51"
-                    },
-                    {
-                        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                    }
-                ]
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+            },
+            {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            },
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0"
+            },
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.2535.51"
+            },
+            {
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            }
+        ]
         self.logger = self.setup_logger()
         self.news_count = 0
         self.config = {
@@ -48,7 +48,8 @@ class AsahiCrawler:
             "valid_image_extensions": [".jpg", ".jpeg", ".png", ".webp"],
             "request_timeout": 10,
             "max_retries": 3,
-            "min_image_size": 10000  # Minimum image size in bytes (if detectable)
+            "min_image_size": 10000,  # Minimum image size in bytes (if detectable)
+            "image_save_path": "./saves/pic"  # Default image save path
         }
 
     def setup_logger(self):
@@ -57,16 +58,16 @@ class AsahiCrawler:
         os.makedirs(log_dir, exist_ok=True)
         
         logger = logging.getLogger("asahi_crawler")
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(logging.INFO)
         
         file_handler = logging.FileHandler(
             f"{log_dir}/{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
             encoding="utf-8"
         )
-        file_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(logging.INFO)
         
         console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.DEBUG)
+        console_handler.setLevel(logging.INFO)
         
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         file_handler.setFormatter(formatter)
@@ -77,6 +78,65 @@ class AsahiCrawler:
             logger.addHandler(console_handler)
         
         return logger
+    
+    def download_images(self, news_item, save_dir=None):
+        """Download images from news item's image links to the specified directory"""
+        if save_dir is None:
+            save_dir = self.config["image_save_path"]
+        
+        os.makedirs(save_dir, exist_ok=True)
+        downloaded_files = []
+        
+        # Extract URL suffix from 原文链接
+        url = news_item.get("原文链接", "")
+        if url:
+            # Get the last part of the URL path (e.g., 'ASN123456789' from 'https://www.asahi.com/articles/ASN123456789.html')
+            url_suffix = os.path.basename(url.rstrip('/')).split('?')[0]
+            # Remove .html extension if present
+            url_suffix = os.path.splitext(url_suffix)[0]
+            # Sanitize the suffix for folder name (remove invalid characters)
+            folder_name = re.sub(r'[^\w\-]', '_', url_suffix)[:50]  # Limit to 50 characters, replace invalid chars with '_'
+        else:
+            folder_name = "unnamed"  # Fallback if no URL is present
+        
+        article_dir = os.path.join(save_dir, folder_name)
+        os.makedirs(article_dir, exist_ok=True)
+        
+        for idx, img_url in enumerate(news_item.get("图片链接", []), start=1):
+            try:
+                headers = random.choice(self.headers_list)
+                response = requests.get(img_url, headers=headers, timeout=self.config["request_timeout"])
+                if response.status_code != 200:
+                    self.logger.error(f"下载图片失败: {img_url}, 状态码: {response.status_code}")
+                    continue
+                
+                # Extract file extension
+                ext = os.path.splitext(img_url)[1].lower()
+                if ext not in self.config["valid_image_extensions"]:
+                    self.logger.warning(f"跳过无效图片扩展名: {img_url}")
+                    continue
+                
+                # Check image size if possible
+                content_length = response.headers.get("Content-Length")
+                if content_length and int(content_length) < self.config["min_image_size"]:
+                    self.logger.warning(f"图片过小，跳过: {img_url}, 大小: {content_length} bytes")
+                    continue
+                
+                # Generate filename
+                filename = f"{idx}{ext}"
+                filepath = os.path.join(article_dir, filename)
+                
+                # Save image
+                with open(filepath, "wb") as f:
+                    f.write(response.content)
+                downloaded_files.append(filepath)
+                self.logger.info(f"成功下载图片: {img_url} 到 {filepath}")
+            
+            except Exception as e:
+                self.logger.error(f"下载图片失败: {img_url}, 错误: {str(e)}")
+                continue
+        
+        return downloaded_files
     
     def fetch_url(self, url, retries=0):
             """Fetch URL with retries and random User-Agent"""
@@ -487,11 +547,15 @@ class AsahiCrawler:
             os.makedirs(output_dir, exist_ok=True)
             filename = f"{output_dir}/{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             with open(filename, "w", encoding="utf-8-sig", newline="") as csvfile:
-                fieldnames = ["序号", "标题", "发布时间", "正文", "主题", "图片数量", "图片链接", "原文链接"]
+                fieldnames = ["序号", "标题", "发布时间", "正文", "主题", "图片数量", "图片链接", "原文链接", "下载的图片路径"]
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
                 for idx, news in enumerate(data["news"], start=1):
-                    row = {"序号": idx, **news}  # Add sequence number to news dict
+                    row = {
+                        "序号": idx,
+                        **news,
+                        "下载的图片路径": ";".join(news.get("下载的图片路径", []))  # Join paths with semicolon for CSV
+                    }
                     writer.writerow(row)
             self.logger.info(f"新闻数据已保存到CSV: {filename}")
             return filename
@@ -513,12 +577,19 @@ class AsahiCrawler:
             return None
 
     def save_data(self, data, output_formats=["csv", "json"], output_dir="saves"):
-        """Save data to specified formats"""
+        """Save data to specified formats and download images"""
         results = []
+        
+        # Update news items with downloaded image paths
+        for news_item in data["news"]:
+            downloaded_files = self.download_images(news_item, os.path.join(output_dir, "pic"))
+            news_item["下载的图片路径"] = downloaded_files  # Add downloaded file paths to news item
+        
         if "csv" in output_formats:
             results.append(self.save_to_csv(data, f"{output_dir}/csv"))
         if "json" in output_formats:
             results.append(self.save_to_json(data, f"{output_dir}/json"))
+        
         return results
 
     def crawl_search_results(self, keyword, max_search_news, visited_urls, max_news_count, request_delay, render_timeout=15):
@@ -581,8 +652,8 @@ if __name__ == "__main__":
     search_keywords = ["東京"]
     
     config = {
-        "max_news_count": 100,
-        "max_nav_news": 90,
+        "max_news_count": 10,
+        "max_nav_news": 1,
         "max_search_news": 10,
         "request_delay": 0.5,
         "render_timeout": 15,
@@ -626,6 +697,7 @@ if __name__ == "__main__":
             print(f"\n共爬取到 {len(result['news'])} 条新闻，其中 {len(free_news)} 条为免费内容")
             print(f"发现 {len(result['navigation'])} 个导航分类")
             print(f"数据已保存到: {', '.join([f for f in saved_files if f])}")
+            print(f"图片已保存到: {crawler.config['image_save_path']}")
         else:
             print("未爬取到任何免费新闻数据")
     else:
