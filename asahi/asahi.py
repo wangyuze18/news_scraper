@@ -188,6 +188,7 @@ class AsahiCrawler:
                         title = page_data.get("title", "")
                         publish_time = page_data.get("publish_time", "")
                         image_links = self.extract_images(detail_url)
+                        topic = page_data.get("topic", "")
                 
                 # 对标题进行编码处理
                 try:
@@ -202,6 +203,7 @@ class AsahiCrawler:
                     "标题": title,
                     "发布时间": publish_time,
                     "正文": "\n".join(content),
+                    "主题": topic,
                     "图片数量": len(image_links),
                     "图片链接": image_links,
                     "原文链接": detail_url,
@@ -358,7 +360,7 @@ class AsahiCrawler:
             return False
         
     def crawl_detail_page(self, url):
-        """爬取详情页内容，返回包含标题、时间和正文的字典"""
+        """爬取详情页内容，返回包含标题、时间、正文和主题的字典"""
         try:
             # 添加重试机制
             max_retries = 3
@@ -370,7 +372,7 @@ class AsahiCrawler:
                 except Exception as e:
                     if attempt == max_retries - 1:
                         self.logger.error(f"请求详情页失败: {url}, 错误: {str(e)}")
-                        return {"content": [], "title": "", "publish_time": ""}
+                        return {"content": [], "title": "", "publish_time": "", "topic": ""}
                     time.sleep(2 * (attempt + 1))  # 指数退避
                     
             # 设置编码，优先使用网页指定的编码
@@ -378,6 +380,12 @@ class AsahiCrawler:
                 response.encoding = response.apparent_encoding
                 
             soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 提取主题信息
+            topic = ""
+            meta_tag = soup.find('meta', {'name': 'cXenseParse:ash-category'})
+            if meta_tag and 'content' in meta_tag.attrs:
+                topic = meta_tag['content']
             
             # 提取标题 - 尝试多种可能的标题元素
             title_div = soup.find('div', class_='y_Qv3')
@@ -413,10 +421,10 @@ class AsahiCrawler:
                 paragraphs = soup.find_all('p')
                 if len(paragraphs) > 3:  # 如果有足够多的段落，认为这是正文
                     content = [p.get_text(strip=True) for p in paragraphs]
-                    return {"content": content, "title": title, "publish_time": publish_time}
+                    return {"content": content, "title": title, "publish_time": publish_time, "topic": topic}
                 else:
                     self.logger.warning(f"未找到正文容器: {url}")
-                    return {"content": [], "title": title, "publish_time": publish_time}
+                    return {"content": [], "title": title, "publish_time": publish_time, "topic": topic}
             
             # 提取正文内容
             if main_content:
@@ -437,11 +445,11 @@ class AsahiCrawler:
                 if len(content) < 3:
                     self.logger.warning(f"提取的正文内容过少: {url}")
             
-            return {"content": content, "title": title, "publish_time": publish_time}
+            return {"content": content, "title": title, "publish_time": publish_time, "topic": topic}
             
         except Exception as e:
             self.logger.error(f"爬取详情页内容出错: {url}, 错误: {str(e)}")
-            return {"content": [], "title": "", "publish_time": ""}
+            return {"content": [], "title": "", "publish_time": "", "topic": ""}
     
     def extract_images(self, url):
         """提取详情页中的所有图片链接（包括大图和缩略图）"""
@@ -533,7 +541,7 @@ class AsahiCrawler:
             
             with open(filename, "w", encoding="utf-8-sig", newline="") as csvfile:
                 # 保存新闻数据
-                fieldnames = ["标题", "发布时间", "正文", "图片数量", "图片链接", "原文链接"]
+                fieldnames = ["标题", "发布时间", "正文", "主题", "图片数量", "图片链接", "原文链接"]
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 
                 writer.writeheader()
@@ -570,7 +578,7 @@ if __name__ == "__main__":
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     
 
-    MAX_NEWS_COUNT = 100  # 最大爬取新闻数量
+    MAX_NEWS_COUNT = 10  # 最大爬取新闻数量
 
     crawler = AsahiCrawler()
     target_url = "https://www.asahi.com/"
