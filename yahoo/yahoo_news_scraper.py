@@ -58,7 +58,7 @@ class YahooJapanNewsScraper:
             "life": "生活",
             "it": "科技",
         }
-        self.keywords = ['a']
+        self.keywords = ["花束みたいな恋をした","ラブレター","リアル鬼ごっこ","君の名は。"]
         
         # New: Image download settings
         self.download_images = download_images  # Whether to download images
@@ -863,10 +863,10 @@ if __name__ == "__main__":
     scraper.logger.info(f"开始爬取时间：{start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     articles = scraper.scrape_news(
-        max_articles=10,  # Reduced for testing
+        max_articles=100,  # Reduced for testing
         max_per_topics=5,
-        max_per_categories=0,
-        max_links_per_keyword=0,
+        max_per_categories=5,
+        max_links_per_keyword=21,
     )
     
     end_time = datetime.now()

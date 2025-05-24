@@ -48,7 +48,7 @@ class AsahiCrawler:
             "valid_image_extensions": [".jpg", ".jpeg", ".png", ".webp"],
             "request_timeout": 10,
             "max_retries": 3,
-            "min_image_size": 10000,  # Minimum image size in bytes (if detectable)
+            "min_image_size": 20,  # Minimum image size in bytes (if detectable)
             "image_save_path": "./saves/pic"  # Default image save path
         }
 
@@ -649,12 +649,12 @@ if __name__ == "__main__":
     
     crawler = AsahiCrawler()
     target_url = "https://www.asahi.com/"
-    search_keywords = ["東京"]
+    search_keywords = ["花束みたいな恋をした","ラブレター","言葉の庭","君の名は。","打ち上げ花火","小森",]
     
     config = {
-        "max_news_count": 10,
-        "max_nav_news": 1,
-        "max_search_news": 10,
+        "max_news_count": 100,
+        "max_nav_news": 50,
+        "max_search_news": 25,
         "request_delay": 0.5,
         "render_timeout": 15,
         "output_formats": ["csv", "json"]
@@ -670,15 +670,7 @@ if __name__ == "__main__":
         request_delay=config["request_delay"],
         render_timeout=config["render_timeout"]
     )
-    
-    end_time = datetime.now()
-    elapsed_time = end_time - start_time
-    
-    crawler.logger.info("\n爬取时间统计:")
-    crawler.logger.info(f"- 开始时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    crawler.logger.info(f"- 结束时间: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    crawler.logger.info(f"- 总耗时: {elapsed_time.total_seconds():.2f} 秒 ({elapsed_time})")
-    
+
     if result and result["news"]:
         free_news = [news for news in result["news"] if "[付费内容，无法获取全文]" not in news["正文"]]
         filtered_result = {
@@ -688,7 +680,6 @@ if __name__ == "__main__":
                 "total_news": len(result["news"]),
                 "free_news": len(free_news),
                 "navigation_count": len(result["navigation"]),
-                "crawl_duration": str(elapsed_time)
             }
         }
         
@@ -703,3 +694,12 @@ if __name__ == "__main__":
     else:
         print("未爬取到任何新闻数据")
         print("提示：网站结构可能已更新，需要进一步调试选择器")
+    
+    end_time = datetime.now()
+    elapsed_time = end_time - start_time
+    
+    crawler.logger.info("\n爬取时间统计:")
+    crawler.logger.info(f"- 开始时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    crawler.logger.info(f"- 结束时间: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    crawler.logger.info(f"- 总耗时: {elapsed_time.total_seconds():.2f} 秒 ({elapsed_time})")
+    
