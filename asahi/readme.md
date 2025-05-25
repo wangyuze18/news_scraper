@@ -1,9 +1,3 @@
-To update the Chinese README to reflect the addition of the image download functionality, I'll incorporate the new feature into the relevant sections, including the tool introduction, configuration parameters, output data structure, and usage instructions. The updated README will clearly describe the image download feature, the default save path (`./saves/pic`), and how images are organized using the URL suffix (e.g., `ASN123456789` from `https://www.asahi.com/articles/ASN123456789.html`). I'll also ensure the README remains consistent with the existing structure and style.
-
-Below is the updated README:
-
----
-
 # Asahi 新闻爬虫工具
 
 ## 一、工具简介
